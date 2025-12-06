@@ -60,7 +60,7 @@ compliance_officer_agent = {
 
 # --- Main Agent Setup ---
 
-model = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0)
+model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
 # The 'Director' is the main orchestrator.
 agent = create_deep_agent(
