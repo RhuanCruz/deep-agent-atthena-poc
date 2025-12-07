@@ -4,6 +4,18 @@ import uvicorn
 from fastapi import FastAPI
 from langserve import add_routes
 from agent import agent
+from pydantic import BaseModel
+from typing import List, Any, Dict
+
+# Bypass introspection bug by defining explicit schemas
+class Input(BaseModel):
+    messages: List[Dict[str, Any]]
+
+class Output(BaseModel):
+    messages: List[Dict[str, Any]]
+
+# Wrap the agent with explicit types
+agent_runnable = agent.with_types(input_type=Input, output_type=Output)
 
 app = FastAPI(
     title="Deep Research Agent",
@@ -13,7 +25,7 @@ app = FastAPI(
 
 add_routes(
     app,
-    agent,
+    agent_runnable,
     path="/research",
 )
 
