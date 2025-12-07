@@ -16,9 +16,6 @@ def _get_db_connection():
     except Exception as e:
         raise ConnectionError(f"Failed to connect to database: {e}")
 
-
-
-
 @tool(parse_docstring=True)
 def query_financial_db(query: str) -> str:
     """Execute a raw SQL query against the Financial Database (PostgreSQL).
@@ -76,8 +73,6 @@ def inspect_database_tables() -> str:
     Call this FIRST to understand the database structure before writing queries.
     """
     return query_financial_db.invoke("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
-
-# --- AZURE VECTOR SEARCH TOOLS ---
 
 @tool(parse_docstring=True)
 def search_fre_vector(query: str, section_type: str = None) -> str:
@@ -169,8 +164,6 @@ def search_fre_vector(query: str, section_type: str = None) -> str:
     except Exception as e:
         print(f"❌ [Vector Search] Error: {e}")
         return f"Vector Search Error: {e}"
-
-# --- UTILITY TOOLS ---
 
 @tool(parse_docstring=True)
 def dummy_search(query: str) -> str:

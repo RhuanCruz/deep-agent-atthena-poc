@@ -15,6 +15,12 @@ from research_agent.prompts import (
     COMPLIANCE_OFFICER_INSTRUCTIONS,
 )
 
+model = AzureChatOpenAI(
+    azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
+    api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
+    temperature=0.0
+)
+
 from research_agent.tools import (
     dummy_search, 
     think_tool, 
@@ -24,56 +30,61 @@ from research_agent.tools import (
 )
 
 
-forensic_accountant_agent = {
-    "name": "forensic_accountant",
-    "description": "Extrai dados quantitativos (Hard Data) estruturados via SQL.",
-    "system_prompt": FORENSIC_ACCOUNTANT_INSTRUCTIONS,
-    "tools": [query_financial_db, inspect_database_tables, think_tool], 
-}
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 
-strategy_analyst_agent = {
-    "name": "strategy_analyst",
-    "description": "Analisa aspectos qualitativos e riscos via busca vetorial.",
-    "system_prompt": STRATEGY_ANALYST_INSTRUCTIONS,
-    "tools": [search_fre_vector, think_tool],
-}
+# --- SUB-AGENTS (MANUAL INSTANTIATION) ---
 
-data_viz_agent = {
-    "name": "data_viz_specialist",
-    "description": "Gera código Python para gráficos profissionais.",
-    "system_prompt": DATA_VIZ_SPECIALIST_INSTRUCTIONS,
-    "tools": [dummy_search, think_tool],
-}
-
-lead_analyst_agent = {
-    "name": "lead_analyst",
-    "description": "Revisor e Redator. Sintetiza inputs no relatório final. Pode solicitar revisões.",
-    "system_prompt": LEAD_ANALYST_INSTRUCTIONS,
-    "tools": [think_tool],
-}
-
-compliance_officer_agent = {
-    "name": "compliance_officer",
-    "description": "Auditor Final. Verifica alucinações, consistência e qualidade visual. Rejeita se necessário.",
-    "system_prompt": COMPLIANCE_OFFICER_INSTRUCTIONS,
-    "tools": [think_tool],
-}
-
-model = AzureChatOpenAI(
-    azure_deployment=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
-    api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
-    temperature=0.0
+# 1. Forensic Accountant (Hard Data)
+forensic_agent = create_deep_agent(
+    model=model,
+    tools=[query_financial_db, inspect_database_tables, think_tool],
+    system_prompt=FORENSIC_ACCOUNTANT_INSTRUCTIONS,
 )
+
+@tool
+def forensic_accountant(task: str) -> str:
+    """Delegates a financial research task to the Forensic Accountant agent.
+    
+    Use this for fetching HARD DATA (Revenue, Income, Debt, etc.) from the SQL database.
+    Pass a clear task description (e.g. "Get Revenue for AMER3 in 2024").
+    """
+    try:
+        response = forensic_agent.invoke({"messages": [HumanMessage(content=task)]})
+        return response["messages"][-1].content
+    except Exception as e:
+        return f"Forensic Agent Failed: {e}"
+
+# 2. Strategy Analyst (Soft Data)
+strategy_agent = create_deep_agent(
+    model=model,
+    tools=[search_fre_vector, think_tool],
+    system_prompt=STRATEGY_ANALYST_INSTRUCTIONS,
+)
+
+@tool
+def strategy_analyst(task: str) -> str:
+    """Delegates a qualitative analysis task to the Strategy Analyst agent.
+    
+    Use this for researching RISKS, STRATEGY, and CONTEXT from unstructured text.
+    Pass a clear question (e.g. "What are the strategic risks for Americanas?").
+    """
+    try:
+        response = strategy_agent.invoke({"messages": [HumanMessage(content=task)]})
+        return response["messages"][-1].content
+    except Exception as e:
+        return f"Strategy Agent Failed: {e}"
+
+# --- MAIN DIRECTOR AGENT ---
 
 agent = create_deep_agent(
     model=model,
-    tools=[], 
+    tools=[
+        forensic_accountant, 
+        strategy_analyst, 
+        think_tool,
+        dummy_search 
+    ], 
     system_prompt=DIRECTOR_SYSTEM_PROMPT,
-    subagents=[
-        forensic_accountant_agent,
-        strategy_analyst_agent,
-        data_viz_agent,
-        lead_analyst_agent,
-        compliance_officer_agent,
-    ],
+    subagents=[], 
 )

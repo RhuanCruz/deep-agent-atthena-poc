@@ -14,7 +14,7 @@ except Exception as e:
     print(f"Failed to import agent: {e}")
     exit(1)
 
-input_message = "Qual foi o lucro líquido da Petrobras no 3T25 e quais os riscos operacionais?"
+input_message = "Analise a Americanas (AMER3). Quero a Receita e Lucro de 2024, e os principais riscos estratégicos."
 print(f"\nInvoking agent with: '{input_message}'")
 print("-" * 50)
 
