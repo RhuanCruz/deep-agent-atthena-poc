@@ -167,3 +167,10 @@ cython_debug/
 .langgraph_api/
 .vscode/
 .DS_Store
+
+# Cloud Platform Build Dirs (Stop watchfiles loop)
+.heroku/
+.profile.d/
+lib/
+bin/
+.config/
