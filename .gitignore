@@ -174,3 +174,4 @@ cython_debug/
 lib/
 bin/
 .config/
+deepagents-quickstarts/deep_research/nul
