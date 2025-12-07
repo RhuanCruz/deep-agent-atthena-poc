@@ -1,7 +1,7 @@
 # Relatório de Informações Trimestrais (ITR) - 3T25
 **Empresa:** Petróleo Brasileiro S.A. - Petrobras  
 **Data Base:** 30 de setembro de 2025  
-**Auditoria:** KPMG Auditores Independentes Ltda.
+**Auditoria:** KPMG Auditores Independentes Ltda. Relatório datado de 06 de novembro de 2025.
 
 ## 1. Destaques Financeiros e Operacionais (Consolidado)
 

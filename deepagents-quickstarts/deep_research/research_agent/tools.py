@@ -1,171 +1,191 @@
-"""Research Tools.
-
-This module provides search and content processing utilities for the research agent.
-"""
-
+"""Tools for the Research Agent."""
 import os
-import httpx
+import requests
+import psycopg2
+from typing import Optional, List, Dict, Any
 from langchain_core.tools import tool
-from markdownify import markdownify
-from tavily import TavilyClient
-from typing_extensions import Annotated, Literal
+from dotenv import load_dotenv
 
-try:
-    tavily_client = TavilyClient()
-except Exception:
-    tavily_client = None
+# Load env vars
+load_dotenv(override=True)
 
-# --- Local Document Tools (Mock RAG) ---
-DOCS_DIR = os.path.join(os.path.dirname(__file__), "docs")
+def _get_db_connection():
+    try:
+        conn = psycopg2.connect(os.getenv("POSTGRES_CONNECTION_STRING"))
+        return conn
+    except Exception as e:
+        raise ConnectionError(f"Failed to connect to database: {e}")
+
+
+
 
 @tool(parse_docstring=True)
-def read_local_document(
-    doc_name: str,
-    query: str = None
-) -> str:
-    """Read specific local documents (ITR, FRE, DFP) by name or list available ones.
+def query_financial_db(query: str) -> str:
+    """Execute a raw SQL query against the Financial Database (PostgreSQL).
     
-    Use this tool to fetch the full text of a financial document to extract data.
-    
-    Args:
-        doc_name: Exact filename or keywords like 'ITR', 'FRE', 'Petrobras'. If 'list', returns available files.
-        query: Optional query to filter or focus (currently returns full text for simplicity).
-    """
-    if not os.path.exists(DOCS_DIR):
-        return f"Erro: Diretório de documentos não encontrado em {DOCS_DIR}"
-        
-    files = os.listdir(DOCS_DIR)
-    
-    # 1. List files
-    if doc_name.lower() == "list":
-        return f"Documentos Disponíveis:\n" + "\n".join([f"- {f}" for f in files])
-    
-    # 2. Fuzzy match filename
-    target_file = None
-    for f in files:
-        if doc_name.lower() in f.lower():
-            target_file = f
-            break
-            
-    if not target_file:
-        return f"Documento '{doc_name}' não encontrado. Disponíveis: {files}"
-        
-    # 3. Read content
-    try:
-        path = os.path.join(DOCS_DIR, target_file)
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        return f"## Documento: {target_file}\n\n{content}"
-    except Exception as e:
-        return f"Erro ao ler {target_file}: {e}"
+    Use this tool to retrieve precise quantitative data (Revenue, EBITDA, Debt, etc.)
+    from structured tables.
 
-# --- Search Tools ---
+    Args:
+        query: Valid SQL query string (read-only).
+    """
+    # 🛡️ SECURITY CHECK: Enforce READ-ONLY access
+    normalized_query = query.strip().upper()
+    if not normalized_query.startswith("SELECT"):
+        return "Security Error: Only SELECT queries are allowed to prevent data modification."
+
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
+        
+        if cursor.description:
+            columns = [desc[0] for desc in cursor.description]
+            results = cursor.fetchmany(50) # Limit to 50 rows to protect context window
+            
+            if not results:
+                return "No results found."
+            
+            # Format Markdown table
+            md_table = "| " + " | ".join(columns) + " |\n"
+            md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+            
+            for row in results:
+                row_str = [str(x) for x in row]
+                md_table += "| " + " | ".join(row_str) + " |\n"
+            
+            if len(results) == 50:
+                md_table += "\n*(Results truncated to 50 rows for safety based on context limits)*"
+                
+            return md_table
+        else:
+            conn.commit()
+            return "Query executed successfully (no results returned)."
+            
+    except Exception as e:
+        return f"SQL Error: {e}"
+    finally:
+        if conn:
+            conn.close()
+
+@tool(parse_docstring=True)
+def inspect_database_tables() -> str:
+    """Retrieve the list of tables and their schema in the database.
+    
+    Call this FIRST to understand the database structure before writing queries.
+    """
+    return query_financial_db.invoke("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+
+# --- AZURE VECTOR SEARCH TOOLS ---
+
+@tool(parse_docstring=True)
+def search_fre_vector(query: str, section_type: str = None) -> str:
+    """Search the 'Corporate Memory' (Vector Store) for qualitative context.
+    
+    Use this to find 'Risk Factors', 'Strategy', 'Governance' details from 
+    reference forms (FRE).
+
+    Args:
+        query: The semantic search query (e.g. "principais riscos operacionais").
+        section_type: Optional filter. Common types: 'RISK_FACTORS', 'STRATEGY', 'GOVERNANCE', 'BUSINESS_OVERVIEW'.
+    """
+    endpoint = os.getenv("AZURE_SEARCH_ENDPOINT")
+    api_key = os.getenv("AZURE_SEARCH_KEY") or os.getenv("AZURE_SEARCH_ADMIN_KEY")
+    index_name = os.getenv("AZURE_SEARCH_INDEX", "external-documents")
+    api_version = os.getenv("AZURE_API_VERSION", "2023-11-01")
+
+    if not endpoint or not api_key:
+        return "Error: Azure Search credentials not configured."
+
+    url = f"{endpoint}/indexes/{index_name}/docs/search?api-version={api_version}"
+    headers = {
+        "api-key": api_key,
+        "Content-Type": "application/json"
+    }
+
+    # Logging inputs
+    print(f"🔎 [Vector Search] Query: '{query}' | Filter: {section_type}")
+
+    # Construct Body
+    # Schema Mapping:
+    # title -> titulo
+    # content -> conteudo
+    # section_type -> tipo_secao
+    # year -> ano_fiscal
+    # company_name -> companhia_nome
+    # source -> (Not present in index, will fallback)
+    
+    body = {
+        "search": query,
+        "top": 5,
+        "select": "titulo,conteudo,ano_fiscal,tipo_secao,companhia_nome" 
+    }
+
+    if section_type:
+        body["filter"] = f"tipo_secao eq '{section_type}'"
+
+    try:
+        response = requests.post(url, headers=headers, json=body, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        docs = data.get("value", [])
+        print(f"✅ [Vector Search] Hit Count: {len(docs)}")
+        
+        # --- FALLBACK MECHANISM ---
+        if not docs and section_type:
+            print(f"⚠️ [Vector Search] No results with filter '{section_type}'. Retrying broad search...")
+            # Remove filter and retry
+            if "filter" in body:
+                del body["filter"]
+            
+            response = requests.post(url, headers=headers, json=body, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            docs = data.get("value", [])
+            print(f"🔄 [Vector Search] Retry Hit Count: {len(docs)}")
+        # --------------------------
+
+        if not docs:
+            return "No relevant documents found in vector store."
+            
+        formatted_results = ""
+        for i, doc in enumerate(docs, 1):
+            title = doc.get("titulo", "Unknown Doc")
+            content = doc.get("conteudo", "")[:1000]
+            year = doc.get("ano_fiscal", "N/A")
+            company = doc.get("companhia_nome", "Unknown Company")
+            section = doc.get("tipo_secao", "Unknown Section")
+            
+            formatted_results += f"Source [{i}]: {title} ({year}) - {company} [Section: {section}]\n"
+            formatted_results += f"Content: {content}...\n"
+            formatted_results += "-" * 40 + "\n"
+        
+        # Log snippet
+        print(f"📄 [Vector Search] Result Snippet: {formatted_results[:200]}...")
+        return formatted_results
+
+    except Exception as e:
+        print(f"❌ [Vector Search] Error: {e}")
+        return f"Vector Search Error: {e}"
+
+# --- UTILITY TOOLS ---
+
 @tool(parse_docstring=True)
 def dummy_search(query: str) -> str:
     """A dummy search tool that returns a placeholder.
     
     Args:
-        query: Search query
+        query: The search query string.
     """
-    return f"Search is currently disabled. Query: {query}"
-
-
-def fetch_webpage_content(url: str, timeout: float = 10.0) -> str:
-    """Fetch and convert webpage content to markdown.
-
-    Args:
-        url: URL to fetch
-        timeout: Request timeout in seconds
-
-    Returns:
-        Webpage content as markdown
-    """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-
-    try:
-        response = httpx.get(url, headers=headers, timeout=timeout)
-        response.raise_for_status()
-        return markdownify(response.text)
-    except Exception as e:
-        return f"Error fetching content from {url}: {str(e)}"
-
-
-@tool(parse_docstring=True)
-def tavily_search(
-    query: str,
-    max_results: int = 1,
-    topic: Literal["general", "news", "finance"] = "general",
-) -> str:
-    """Search the web for information on a given query.
-
-    Uses Tavily to discover relevant URLs, then fetches and returns full webpage content as markdown.
-
-    Args:
-        query: Search query to execute
-        max_results: Maximum number of results to return (default: 1)
-        topic: Topic filter - 'general', 'news', or 'finance' (default: 'general')
-    """
-    if not tavily_client:
-        return "Tavily Search not configured (missing API key)."
-
-    # Use Tavily to discover URLs
-    try:
-        search_results = tavily_client.search(
-            query,
-            max_results=max_results,
-            topic=topic,
-        )
-
-        # Fetch full content for each URL
-        result_texts = []
-        for result in search_results.get("results", []):
-            url = result["url"]
-            title = result["title"]
-
-            # Fetch webpage content
-            content = fetch_webpage_content(url)
-
-            result_text = f"""## {title}
-**URL:** {url}
-
-{content}
-
----
-"""
-            result_texts.append(result_text)
-
-        # Format final response
-        response = f"""🔍 Found {len(result_texts)} result(s) for '{query}':
-
-{chr(10).join(result_texts)}"""
-
-        return response
-    except Exception as e:
-        return f"Error executing Tavily search: {e}"
-
+    return f"Search placeholder. Query: {query}"
 
 @tool(parse_docstring=True)
 def think_tool(reflection: str) -> str:
-    """Tool for strategic reflection on research progress and decision-making.
-
-    Use this tool after each search to analyze results and plan next steps systematically.
-    This creates a deliberate pause in the research workflow for quality decision-making.
-
-    When to use:
-    - After receiving search results: What key information did I find?
-    - Before deciding next steps: Do I have enough to answer comprehensively?
-    - When assessing research gaps: What specific information am I still missing?
-    - Before concluding research: Can I provide a complete answer now?
-
-    Reflection should address:
-    1. Analysis of current findings - What concrete information have I gathered?
-    2. Gap assessment - What crucial information is still missing?
-    3. Quality evaluation - Do I have sufficient evidence/examples for a good answer?
-    4. Strategic decision - Should I continue searching or provide my answer?
-
+    """Tool for strategic reflection.
+    
     Args:
-        reflection: Your detailed reflection on research progress, findings, gaps, and next steps
+        reflection: The thoughtful reflection or reasoning to record.
     """
     return f"Reflection recorded: {reflection}"
