@@ -12,7 +12,7 @@
     "type": "postgres",
     "index": {
       "dims": 1536,
-      "embed": "openai:text-embedding-3-small"
+      "embed": "azure_openai:text-embedding-3-small"
     }
   }
 }
