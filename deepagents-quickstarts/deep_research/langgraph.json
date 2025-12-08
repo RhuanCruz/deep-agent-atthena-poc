@@ -7,5 +7,8 @@
     "agent": "./agent.py:agent",
     "default": "./agent.py:agent"
   },
-  "env": ".env"
+  "env": ".env",
+  "store": {
+    "type": "postgres"
+  }
 }
