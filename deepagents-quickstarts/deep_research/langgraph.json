@@ -7,9 +7,5 @@
     "agent": "./agent.py:agent",
     "default": "./agent.py:agent"
   },
-  "env": ".env",
-  "store": {
-    "type": "sqlite",
-    "uri": "./langgraph.db"
-  }
+  "env": ".env"
 }
