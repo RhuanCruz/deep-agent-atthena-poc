@@ -9,6 +9,7 @@
   },
   "env": ".env",
   "store": {
-    "type": "postgres"
+    "type": "sqlite",
+    "uri": "./langgraph.db"
   }
 }
